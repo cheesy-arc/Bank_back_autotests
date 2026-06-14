@@ -129,8 +129,8 @@ class TestCreateUser:
     def test_create_user_valid(self, api_manager: ApiManger, create_user_request: CreateUserRequest, db_session: Session):
         response = api_manager.admin_steps.create_user(create_user_request)
 
-        assert create_user_request.username == response.username
-        assert create_user_request.role == response.role
+        assert create_user_request.username == response.username, "Имя пользователя не совпадает, ошибка"
+        assert create_user_request.role == response.role, "Роль пользователя не совпадает, ошибка"
 
         user_from_db = User.get_user_by_username(db_session, create_user_request.username)
         assert user_from_db.username == create_user_request.username, "Созданного пользователя нет в БД"
@@ -159,89 +159,77 @@ class TestCreateUser:
 
 ### ./main/api/tests/credit_repay_test.py
 import pytest
-from src.main.api.models.credit_request import CreditRequest
+from sqlalchemy.orm import Session
+
+from src.main.api.classes.api_manager import ApiManger
+from src.main.api.models.create_user_request import CreateCreditUserRequest
 from src.main.api.models.credit_repay_request import CreditRepayRequest
+from src.main.api.db.crud.transaction_crud import TransactionCrudDb as Transaction
 
 
 @pytest.mark.api
 class TestCreditRequest:
-    def test_credit_repay(self, api_manager, create_credit_user_request):
+    def test_credit_repay(self, api_manager: ApiManger, create_credit_user_request: CreateCreditUserRequest, db_session: Session, create_account_credit_user, credit_create):
         credit_amount = 5000
-        term_months = 12
 
-        create_account_response = api_manager.user_steps.create_account(create_credit_user_request)
-        account_id = create_account_response.id
-        credit_request = CreditRequest(accountId=account_id, amount=credit_amount, termMonths=term_months)
-        credit_request_response = api_manager.user_steps.credit_request(credit_request, create_credit_user_request)
-        credit_id = credit_request_response.creditId
-        credit_repay_request = CreditRepayRequest(creditId=credit_id, accountId=account_id, amount=credit_amount)
+        credit_repay_request = CreditRepayRequest(creditId=credit_create.creditId, accountId=create_account_credit_user.id, amount=credit_amount)
         credit_repay_response = api_manager.user_steps.credit_repay_request(credit_repay_request, create_credit_user_request)
 
-        assert credit_repay_response.creditId == credit_id
-        assert credit_repay_response.amountDeposited == credit_amount
+        assert credit_repay_response.creditId == credit_create.creditId, "Кредит не погашен или погашение для другого кредита"
+        assert credit_repay_response.amountDeposited == credit_amount, "Сумма погашения не соответствует размеру кредита"
+
+        transaction_from_db = Transaction.get_transaction_by_amount(db_session, credit_amount)
+        assert transaction_from_db.credit_id == credit_create.creditId, "Транзакция не относится к погашаемому кредиту"
 
 
-    def test_credit_repay_unsufficient_amount(self, api_manager, create_credit_user_request):
+    def test_credit_repay_unsufficient_amount(self, api_manager: ApiManger, create_credit_user_request: CreateCreditUserRequest, db_session: Session, create_account_credit_user, credit_create):
         credit_amount = 5000
-        term_months = 12
         credit_repay_unsufficient_amount = 1000
 
-        create_account_response = api_manager.user_steps.create_account(create_credit_user_request)
-        account_id = create_account_response.id
-        credit_request = CreditRequest(accountId=account_id, amount=credit_amount, termMonths=term_months)
-        credit_request_response = api_manager.user_steps.credit_request(credit_request, create_credit_user_request)
-        credit_id = credit_request_response.creditId
-        credit_repay_request = CreditRepayRequest(creditId=credit_id, accountId=account_id, amount=credit_repay_unsufficient_amount)
+        credit_repay_request = CreditRepayRequest(creditId=credit_create.creditId, accountId=create_account_credit_user.id, amount=credit_repay_unsufficient_amount)
         credit_repay_response = api_manager.user_steps.credit_repay_insufficient_request(credit_repay_request, create_credit_user_request)
 
-        assert credit_repay_response.json().get("error") == f"The amount is not enough. Credit balance: -{credit_amount}"### ./main/api/tests/transfer_account_test.py
+        assert credit_repay_response.json().get("error") == f"The amount is not enough. Credit balance: -{credit_amount}", "Кредит погашен или текст ошибки не соответсвует ожиданиям"
+
+        transaction_from_db = Transaction.get_transaction_by_amount(db_session, credit_amount)
+        assert transaction_from_db.credit_id is None, "Транзакция погасила кредит, ошибка"### ./main/api/tests/transfer_account_test.py
 import pytest
 from sqlalchemy.orm import Session
 
 from src.main.api.classes.api_manager import ApiManger
 from src.main.api.models.create_user_request import CreateUserRequest
 from src.main.api.models.transfer_accounts_request import TransferAccountRequest
-from src.main.api.models.deposit_account_request import DepositAccountRequest
 from src.main.api.db.crud.transaction_crud import TransactionCrudDb as Transaction
 
 @pytest.mark.api
 class TestTransferAccount:
-    def test_transfer_valid_amount(self, api_manager: ApiManger, create_user_request: CreateUserRequest, db_session: Session):
+    def test_transfer_valid_amount(self, api_manager: ApiManger, create_user_request: CreateUserRequest, db_session: Session, create_account, create_second_account, deposit_account):
         deposit_amount = 1000
         transfer_amount = 500.75
 
-        account_response_1 = api_manager.user_steps.create_account(create_user_request)
-        account_id_1 = account_response_1.id
-        account_response_2 = api_manager.user_steps.create_account(create_user_request)
-        account_id_2 = account_response_2.id
-        deposit_account_request = DepositAccountRequest(accountId=account_id_1, amount=deposit_amount)
-        api_manager.user_steps.deposit_account(deposit_account_request, create_user_request)
-        transfer_account_request = TransferAccountRequest(fromAccountId=account_id_1, toAccountId=account_id_2, amount=transfer_amount)
+        transfer_account_request = TransferAccountRequest(fromAccountId=create_account.id, toAccountId=create_second_account.id, amount=transfer_amount)
         transfer_account_response = api_manager.user_steps.transfer_account(transfer_account_request, create_user_request)
         leftover = deposit_amount - transfer_amount
 
-        assert transfer_account_response.fromAccountIdBalance == leftover
+        assert transfer_account_response.fromAccountIdBalance == leftover, "Неверный остаток после перевода"
 
         transaction_from_db = Transaction.get_transaction_by_amount(db_session, amount=transfer_amount)
-        assert transaction_from_db.from_account_id == account_id_1, "Транзакция отсутсвует в БД или не принадлежит счёту"
-        assert transaction_from_db.to_account_id == account_id_2, "Транзакция отсутсвует в БД или не принадлежит счёту"
+        assert transaction_from_db.from_account_id == create_account.id, "Транзакция отсутсвует в БД или не принадлежит счёту"
+        assert transaction_from_db.to_account_id == create_second_account.id, "Транзакция отсутсвует в БД или не принадлежит счёту"
 
 
 
-    def test_transfer_invalid_amount(self, api_manager: ApiManger, create_user_request: CreateUserRequest, db_session: Session):
+    def test_transfer_invalid_amount(self, api_manager: ApiManger, create_user_request: CreateUserRequest, db_session: Session, create_account, create_second_account, deposit_account):
         deposit_amount = 1000
         transfer_amount = 2000
 
-        account_response_1 = api_manager.user_steps.create_account(create_user_request)
-        account_id_1 = account_response_1.id
-        account_response_2 = api_manager.user_steps.create_account(create_user_request)
-        account_id_2 = account_response_2.id
-        deposit_account_request = DepositAccountRequest(accountId=account_id_1, amount=deposit_amount)
-        api_manager.user_steps.deposit_account(deposit_account_request, create_user_request)
-        transfer_account_request = TransferAccountRequest(fromAccountId=account_id_1, toAccountId=account_id_2, amount=transfer_amount)
+        transfer_account_request = TransferAccountRequest(fromAccountId=create_account.id, toAccountId=create_second_account.id, amount=transfer_amount)
         transfer_account_response = api_manager.user_steps.transfer_account_insufficient_funds(transfer_account_request, create_user_request)
 
-        assert transfer_account_response.json().get('error') == f"Insufficient funds. Current balance: {deposit_amount}.00, required: {transfer_amount}.00"### ./main/api/tests/create_account_test.py
+        assert transfer_account_response.json().get('error') == f"Insufficient funds. Current balance: {deposit_amount}.00, required: {transfer_amount}.00"
+
+        transaction_from_db = Transaction.get_transaction_by_amount(db_session, amount=transfer_amount)
+        assert transaction_from_db is None, "Транзакция совершилась, ошибка"### ./main/api/tests/create_account_test.py
 import pytest
 from sqlalchemy.orm import Session
 
@@ -261,7 +249,6 @@ class TestCreateAccount:
         assert account_from_db.id == response.id, "Счёт не создан, id аккаунта нет в БД"
         assert account_from_db.balance is not None, "Поле баланса для созданного счёта отсутствует в БД"### ./main/api/tests/login_user_test.py
 import pytest
-from src.main.api.fixtures.api_fixture import api_manager
 from src.main.api.models.user_login_request import LoginUserRequest
 
 
@@ -271,42 +258,38 @@ class TestUserLogin:
         login_user_request = LoginUserRequest(username="admin", password="123456")
         response = api_manager.admin_steps.login_user(login_user_request)
 
-        assert login_user_request.username == response.user.username
-        assert response.user.role == "ROLE_ADMIN"
+        assert login_user_request.username == response.user.username, "Неверное имя юзера после логина"
+        assert response.user.role == "ROLE_ADMIN", "Неверная роль после логина"
 
     def test_login_user(self, api_manager, create_user_request):
         response = api_manager.admin_steps.login_user(create_user_request)
 
-        assert create_user_request.username == response.user.username
-        assert response.user.role == "ROLE_USER"### ./main/api/tests/credit_request_test.py
+        assert create_user_request.username == response.user.username, "Неверное имя юзера после логина"
+        assert response.user.role == "ROLE_USER", "Неверная роль после логина"### ./main/api/tests/credit_request_test.py
 import pytest
 from requests import Session
 
 from src.main.api.classes.api_manager import ApiManger
-from src.main.api.fixtures.db_fixture import db_session
 from src.main.api.models.create_user_request import CreateCreditUserRequest, CreateUserRequest
 from src.main.api.models.credit_request import CreditRequest
 from src.main.api.db.crud.credit_crud import CreditCrudDb as Credit
 
 @pytest.mark.api
 class TestCreditRequest:
-    def test_credit_request_valid_user(self, api_manager: ApiManger, create_credit_user_request: CreateCreditUserRequest, db_session: Session):
-        create_account_response = api_manager.user_steps.create_account(create_credit_user_request)
-        account_id = create_account_response.id
-        credit_request = CreditRequest(accountId=account_id, amount=5000, termMonths=12)
+    def test_credit_request_valid_user(self, api_manager: ApiManger, create_credit_user_request: CreateCreditUserRequest, db_session: Session, create_account_credit_user):
+
+        credit_request = CreditRequest(accountId=create_account_credit_user.id, amount=5000, termMonths=12)
         credit_request_response = api_manager.user_steps.credit_request(credit_request, create_credit_user_request)
-        assert credit_request_response.id == account_id
+        assert credit_request_response.id == create_account_credit_user.id, "Кредит создан не на тот счёт"
 
-        credit_id = credit_request_response.id
-        credit_from_db = Credit.get_credit_by_id(db_session, credit_id)
-        assert credit_from_db.account_id == account_id, "Кредит не создан в БД, или принядлежит другому счёту"
+        credit_from_db = Credit.get_credit_by_id(db_session, credit_request_response.creditId)
+        assert credit_from_db.account_id == create_account_credit_user.id, "Кредит не создан в БД, или принядлежит другому счёту"
 
-    def test_credit_request_invalid_user(self, api_manager: ApiManger, create_user_request: CreateUserRequest):
-        create_account_response = api_manager.user_steps.create_account(create_user_request)
-        account_id = create_account_response.id
-        credit_request = CreditRequest(accountId=account_id, amount=5000, termMonths=12)
+    def test_credit_request_invalid_user(self, api_manager: ApiManger, create_user_request: CreateUserRequest, create_account):
+
+        credit_request = CreditRequest(accountId=create_account.id, amount=5000, termMonths=12)
         credit_request_response = api_manager.user_steps.credit_invalid_request_(credit_request, create_user_request)
-        assert credit_request_response.json().get("detail") == "Forbidden: ROLE_CREDIT access required"
+        assert credit_request_response.json().get("detail") == "Forbidden: ROLE_CREDIT access required", "Кредит был создан или текст ошибки не соответствует ожиданиям"
 
 ### ./main/api/tests/deposit_account_test.py
 import pytest
@@ -320,31 +303,28 @@ from src.main.api.models.deposit_account_request import DepositAccountRequest
 
 @pytest.mark.api
 class TestDepositAccount:
-    def test_deposit_account(self, api_manager: ApiManger, create_user_request: CreateUserRequest, db_session: Session):
+    def test_deposit_account(self, api_manager: ApiManger, db_session: Session, create_user_request: CreateUserRequest, create_account):
         deposit_amount = 1000
 
-        account_response = api_manager.user_steps.create_account(create_user_request)
-        account_id = account_response.id
-        deposit_account_request = DepositAccountRequest(accountId=account_id, amount=deposit_amount)
-        deposit_response = api_manager.user_steps.deposit_account(deposit_account_request, create_user_request)
+        deposit_request = DepositAccountRequest(accountId=create_account.id, amount=deposit_amount)
+        deposit_response = api_manager.user_steps.deposit_account(deposit_request, create_user_request)
 
-        assert deposit_response.balance == deposit_amount
+        assert deposit_response.balance == deposit_request.amount, "Баланс не соответствует изначальной сумме перевода"
 
         account_from_db = Account.get_account_by_id(db_session, deposit_response.id)
-        assert account_from_db.balance == deposit_amount, "В БД не сохранилась запись о балансе аккаунта"
+        assert account_from_db.balance == deposit_request.amount, "В БД не сохранилась запись о балансе аккаунта"
 
 
-
-
-    def test_deposit_account_without_token(self, api_manager, create_user_request):
+    def test_deposit_account_without_token(self, api_manager: ApiManger, db_session: Session, create_account):
         deposit_amount = 1000
 
-        account_response = api_manager.user_steps.create_account(create_user_request)
-        account_id = account_response.id
-        deposit_account_request = DepositAccountRequest(accountId=account_id, amount=deposit_amount)
-        deposit_response = api_manager.user_steps.deposit_account_without_token(deposit_account_request)
+        deposit_account = DepositAccountRequest(accountId=create_account.id, amount=deposit_amount)
+        deposit_response = api_manager.user_steps.deposit_account_without_token(deposit_account)
 
-        assert deposit_response.json().get("message") == "JWT Token not found"### ./main/api/foundation/requesters/validated_crud_requester.py
+        assert deposit_response.json().get("message") == "JWT Token not found"
+
+        account_from_db = Account.get_account_by_id(db_session, create_account.id)
+        assert account_from_db.balance == 0, "Баланс пополнен, ошибка"### ./main/api/foundation/requesters/validated_crud_requester.py
 from typing import Optional
 
 from src.main.api.config.config import Config
@@ -662,7 +642,6 @@ class AdminSteps(BaseSteps):
         ).post(login_user_request)
         return response### ./main/api/steps/user_steps.py
 
-from src.main.api.fixtures.user_fixture import create_user_request
 from src.main.api.foundation.endpoint import Endpoint
 from src.main.api.foundation.requesters.validated_crud_requester import ValidateCrudRequester
 from src.main.api.models.create_user_request import CreateUserRequest, CreateCreditUserRequest
@@ -876,8 +855,13 @@ def clean_user(objects: List[Any]):
         else:
             logging.warning(f"Error in delete user_id: {u.id}")### ./main/api/fixtures/user_fixture.py
 import pytest
+
+from src.main.api.fixtures.api_fixture import api_manager
 from src.main.api.models.create_user_request import CreateUserRequest, CreateCreditUserRequest
+from src.main.api.models.credit_request import CreditRequest
 from src.main.api.generators.model_generator import RandomModelGenerator
+from src.main.api.models.deposit_account_request import DepositAccountRequest
+
 
 @pytest.fixture
 def create_user_request(api_manager):
@@ -889,7 +873,38 @@ def create_user_request(api_manager):
 def create_credit_user_request(api_manager):
     user_request = RandomModelGenerator.generate(CreateCreditUserRequest)
     api_manager.admin_steps.create_credit_user(user_request)
-    return user_request### ./main/api/fixtures/db_fixture.py
+    return user_request
+
+@pytest.fixture
+def create_account(api_manager, create_user_request):
+    response = api_manager.user_steps.create_account(create_user_request)
+    return response
+
+@pytest.fixture
+def create_second_account(api_manager, create_user_request):
+    response = api_manager.user_steps.create_account(create_user_request)
+    return response
+
+@pytest.fixture
+def create_account_credit_user(api_manager, create_credit_user_request):
+    response = api_manager.user_steps.create_account(create_credit_user_request)
+    return response
+
+@pytest.fixture
+def credit_create(api_manager, create_account_credit_user, create_credit_user_request):
+    credit_request = CreditRequest(accountId=create_account_credit_user.id, amount=5000, termMonths=12)
+    response = api_manager.user_steps.credit_request(credit_request, create_credit_user_request)
+    return response
+
+@pytest.fixture
+def deposit_account(api_manager, create_account, create_user_request):
+    deposit_account_request = DepositAccountRequest(accountId=create_account.id, amount=1000)
+    response = api_manager.user_steps.deposit_account(deposit_account_request, create_user_request)
+    return response
+
+
+
+### ./main/api/fixtures/db_fixture.py
 import pytest
 from src.main.api.db.engine import SessionLocal, engine
 

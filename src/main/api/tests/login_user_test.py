@@ -1,5 +1,4 @@
 import pytest
-from src.main.api.fixtures.api_fixture import api_manager
 from src.main.api.models.user_login_request import LoginUserRequest
 
 

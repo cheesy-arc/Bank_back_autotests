@@ -1,5 +1,4 @@
 
-from src.main.api.fixtures.user_fixture import create_user_request
 from src.main.api.foundation.endpoint import Endpoint
 from src.main.api.foundation.requesters.validated_crud_requester import ValidateCrudRequester
 from src.main.api.models.create_user_request import CreateUserRequest, CreateCreditUserRequest
