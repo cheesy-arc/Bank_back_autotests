@@ -36,13 +36,14 @@ def create_account_credit_user(api_manager, create_credit_user_request):
 
 @pytest.fixture
 def credit_create(api_manager, create_account_credit_user, create_credit_user_request):
-    credit_request = CreditRequest(accountId=create_account_credit_user.id, amount=5000, termMonths=12)
+    # credit_request = CreditRequest(accountId=create_account_credit_user.id, amount=5000, termMonths=12)
+    credit_request = RandomModelGenerator.generate(CreditRequest, accountId=create_account_credit_user.id)
     response = api_manager.user_steps.credit_request(credit_request, create_credit_user_request)
     return response
 
 @pytest.fixture
 def deposit_account(api_manager, create_account, create_user_request):
-    deposit_account_request = DepositAccountRequest(accountId=create_account.id, amount=1000)
+    deposit_account_request = RandomModelGenerator.generate(DepositAccountRequest, accountId=create_account.id)
     response = api_manager.user_steps.deposit_account(deposit_account_request, create_user_request)
     return response
 

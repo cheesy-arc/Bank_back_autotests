@@ -162,36 +162,37 @@ import pytest
 from sqlalchemy.orm import Session
 
 from src.main.api.classes.api_manager import ApiManger
+from src.main.api.generators.model_generator import RandomModelGenerator
 from src.main.api.models.create_user_request import CreateCreditUserRequest
 from src.main.api.models.credit_repay_request import CreditRepayRequest
 from src.main.api.db.crud.transaction_crud import TransactionCrudDb as Transaction
+from src.main.api.models.deposit_account_request import DepositAccountRequest
 
 
 @pytest.mark.api
 class TestCreditRequest:
     def test_credit_repay(self, api_manager: ApiManger, create_credit_user_request: CreateCreditUserRequest, db_session: Session, create_account_credit_user, credit_create):
-        credit_amount = 5000
 
-        credit_repay_request = CreditRepayRequest(creditId=credit_create.creditId, accountId=create_account_credit_user.id, amount=credit_amount)
+        credit_repay_request = RandomModelGenerator.generate(DepositAccountRequest, creditId=credit_create.creditId, accountId=create_account_credit_user.id, amount=credit_create.amount)
         credit_repay_response = api_manager.user_steps.credit_repay_request(credit_repay_request, create_credit_user_request)
 
         assert credit_repay_response.creditId == credit_create.creditId, "Кредит не погашен или погашение для другого кредита"
-        assert credit_repay_response.amountDeposited == credit_amount, "Сумма погашения не соответствует размеру кредита"
+        assert credit_repay_response.amountDeposited == credit_create.amount, "Сумма погашения не соответствует размеру кредита"
 
-        transaction_from_db = Transaction.get_transaction_by_amount(db_session, credit_amount)
+        transaction_from_db = Transaction.get_transaction_by_amount(db_session, credit_create.amount)
         assert transaction_from_db.credit_id == credit_create.creditId, "Транзакция не относится к погашаемому кредиту"
 
-
-    def test_credit_repay_unsufficient_amount(self, api_manager: ApiManger, create_credit_user_request: CreateCreditUserRequest, db_session: Session, create_account_credit_user, credit_create):
-        credit_amount = 5000
-        credit_repay_unsufficient_amount = 1000
+    @pytest.mark.parametrize(
+        "credit_repay_unsufficient_amount", [1, 500, 900]
+    )
+    def test_credit_repay_unsufficient_amount(self, api_manager: ApiManger, create_credit_user_request: CreateCreditUserRequest, db_session: Session, create_account_credit_user, credit_create, credit_repay_unsufficient_amount):
 
         credit_repay_request = CreditRepayRequest(creditId=credit_create.creditId, accountId=create_account_credit_user.id, amount=credit_repay_unsufficient_amount)
         credit_repay_response = api_manager.user_steps.credit_repay_insufficient_request(credit_repay_request, create_credit_user_request)
 
-        assert credit_repay_response.json().get("error") == f"The amount is not enough. Credit balance: -{credit_amount}", "Кредит погашен или текст ошибки не соответсвует ожиданиям"
+        assert credit_repay_response.json().get("error") == f"The amount is not enough. Credit balance: -{credit_create.amount}", "Кредит погашен или текст ошибки не соответсвует ожиданиям"
 
-        transaction_from_db = Transaction.get_transaction_by_amount(db_session, credit_amount)
+        transaction_from_db = Transaction.get_transaction_by_amount(db_session, credit_create.amount)
         assert transaction_from_db.credit_id is None, "Транзакция погасила кредит, ошибка"### ./main/api/tests/transfer_account_test.py
 import pytest
 from sqlalchemy.orm import Session
@@ -203,13 +204,15 @@ from src.main.api.db.crud.transaction_crud import TransactionCrudDb as Transacti
 
 @pytest.mark.api
 class TestTransferAccount:
-    def test_transfer_valid_amount(self, api_manager: ApiManger, create_user_request: CreateUserRequest, db_session: Session, create_account, create_second_account, deposit_account):
-        deposit_amount = 1000
-        transfer_amount = 500.75
+    @pytest.mark.parametrize(
+        "transfer_amount",
+        [900.75]
+    )
+    def test_transfer_valid_amount(self, api_manager: ApiManger, create_user_request: CreateUserRequest, db_session: Session, create_account, create_second_account, transfer_amount: float, deposit_account):
 
         transfer_account_request = TransferAccountRequest(fromAccountId=create_account.id, toAccountId=create_second_account.id, amount=transfer_amount)
         transfer_account_response = api_manager.user_steps.transfer_account(transfer_account_request, create_user_request)
-        leftover = deposit_amount - transfer_amount
+        leftover = deposit_account.balance - transfer_amount
 
         assert transfer_account_response.fromAccountIdBalance == leftover, "Неверный остаток после перевода"
 
@@ -217,16 +220,16 @@ class TestTransferAccount:
         assert transaction_from_db.from_account_id == create_account.id, "Транзакция отсутсвует в БД или не принадлежит счёту"
         assert transaction_from_db.to_account_id == create_second_account.id, "Транзакция отсутсвует в БД или не принадлежит счёту"
 
-
-
-    def test_transfer_invalid_amount(self, api_manager: ApiManger, create_user_request: CreateUserRequest, db_session: Session, create_account, create_second_account, deposit_account):
-        deposit_amount = 1000
-        transfer_amount = 2000
+    @pytest.mark.parametrize(
+        "transfer_amount",
+        [10000]
+    )
+    def test_transfer_invalid_amount(self, api_manager: ApiManger, create_user_request: CreateUserRequest, db_session: Session, create_account, create_second_account, deposit_account, transfer_amount):
 
         transfer_account_request = TransferAccountRequest(fromAccountId=create_account.id, toAccountId=create_second_account.id, amount=transfer_amount)
         transfer_account_response = api_manager.user_steps.transfer_account_insufficient_funds(transfer_account_request, create_user_request)
 
-        assert transfer_account_response.json().get('error') == f"Insufficient funds. Current balance: {deposit_amount}.00, required: {transfer_amount}.00"
+        assert transfer_account_response.json().get('error') == f"Insufficient funds. Current balance: {deposit_account.balance}, required: {transfer_amount}.00"
 
         transaction_from_db = Transaction.get_transaction_by_amount(db_session, amount=transfer_amount)
         assert transaction_from_db is None, "Транзакция совершилась, ошибка"### ./main/api/tests/create_account_test.py
@@ -273,12 +276,14 @@ from src.main.api.classes.api_manager import ApiManger
 from src.main.api.models.create_user_request import CreateCreditUserRequest, CreateUserRequest
 from src.main.api.models.credit_request import CreditRequest
 from src.main.api.db.crud.credit_crud import CreditCrudDb as Credit
+from src.main.api.generators.model_generator import RandomModelGenerator
+
 
 @pytest.mark.api
 class TestCreditRequest:
     def test_credit_request_valid_user(self, api_manager: ApiManger, create_credit_user_request: CreateCreditUserRequest, db_session: Session, create_account_credit_user):
 
-        credit_request = CreditRequest(accountId=create_account_credit_user.id, amount=5000, termMonths=12)
+        credit_request = RandomModelGenerator.generate(CreditRequest, accountId=create_account_credit_user.id,)
         credit_request_response = api_manager.user_steps.credit_request(credit_request, create_credit_user_request)
         assert credit_request_response.id == create_account_credit_user.id, "Кредит создан не на тот счёт"
 
@@ -287,7 +292,7 @@ class TestCreditRequest:
 
     def test_credit_request_invalid_user(self, api_manager: ApiManger, create_user_request: CreateUserRequest, create_account):
 
-        credit_request = CreditRequest(accountId=create_account.id, amount=5000, termMonths=12)
+        credit_request = RandomModelGenerator.generate(CreditRequest, accountId=create_account.id)
         credit_request_response = api_manager.user_steps.credit_invalid_request_(credit_request, create_user_request)
         assert credit_request_response.json().get("detail") == "Forbidden: ROLE_CREDIT access required", "Кредит был создан или текст ошибки не соответствует ожиданиям"
 
@@ -297,6 +302,7 @@ from sqlalchemy.orm import Session
 
 from src.main.api.classes.api_manager import ApiManger
 from src.main.api.db.crud.account_crud import AccountCrudDb as Account
+from src.main.api.generators.model_generator import RandomModelGenerator
 from src.main.api.models.create_user_request import CreateUserRequest
 from src.main.api.models.deposit_account_request import DepositAccountRequest
 
@@ -304,9 +310,8 @@ from src.main.api.models.deposit_account_request import DepositAccountRequest
 @pytest.mark.api
 class TestDepositAccount:
     def test_deposit_account(self, api_manager: ApiManger, db_session: Session, create_user_request: CreateUserRequest, create_account):
-        deposit_amount = 1000
 
-        deposit_request = DepositAccountRequest(accountId=create_account.id, amount=deposit_amount)
+        deposit_request = RandomModelGenerator.generate(DepositAccountRequest, accountId=create_account.id)
         deposit_response = api_manager.user_steps.deposit_account(deposit_request, create_user_request)
 
         assert deposit_response.balance == deposit_request.amount, "Баланс не соответствует изначальной сумме перевода"
@@ -316,10 +321,9 @@ class TestDepositAccount:
 
 
     def test_deposit_account_without_token(self, api_manager: ApiManger, db_session: Session, create_account):
-        deposit_amount = 1000
 
-        deposit_account = DepositAccountRequest(accountId=create_account.id, amount=deposit_amount)
-        deposit_response = api_manager.user_steps.deposit_account_without_token(deposit_account)
+        deposit_request = RandomModelGenerator.generate(DepositAccountRequest, accountId=create_account.id)
+        deposit_response = api_manager.user_steps.deposit_account_without_token(deposit_request)
 
         assert deposit_response.json().get("message") == "JWT Token not found"
 
@@ -488,12 +492,14 @@ class HttpRequester:
         self.endpoint = endpoint
         self.response_spec = response_spec
 ### ./main/api/models/credit_request.py
+from src.main.api.generators.creation_rule import CreationRule
 from src.main.api.models.base_model import BaseModel
+from typing import Annotated
 
 class CreditRequest(BaseModel):
     accountId: int
-    amount: float
-    termMonths: int
+    amount: Annotated[float, CreationRule(regex=r'^([5-9][0-9]{3}|1[0-4][0-9]{3})\.[0-9]{2}$')]
+    termMonths: Annotated[int, CreationRule(regex=r'^(3|6|12|24)$')]
 ### ./main/api/models/create_user_response.py
 from src.main.api.models.base_model import BaseModel
 
@@ -582,12 +588,15 @@ class CreateAccountResponse(BaseModel):
     number: str
     balance: float
 ### ./main/api/models/deposit_account_request.py
+from typing import Annotated
+
+from src.main.api.generators.creation_rule import CreationRule
 from src.main.api.models.base_model import BaseModel
 
 
 class DepositAccountRequest(BaseModel):
     accountId: int
-    amount: float
+    amount: Annotated[float, CreationRule(regex=r'^[1-9][0-9]{3}\.[0-9]{2}$')]
 ### ./main/api/steps/admin_steps.py
 from src.main.api.foundation.endpoint import Endpoint
 from src.main.api.foundation.requesters.validated_crud_requester import ValidateCrudRequester
@@ -892,13 +901,14 @@ def create_account_credit_user(api_manager, create_credit_user_request):
 
 @pytest.fixture
 def credit_create(api_manager, create_account_credit_user, create_credit_user_request):
-    credit_request = CreditRequest(accountId=create_account_credit_user.id, amount=5000, termMonths=12)
+    # credit_request = CreditRequest(accountId=create_account_credit_user.id, amount=5000, termMonths=12)
+    credit_request = RandomModelGenerator.generate(CreditRequest, accountId=create_account_credit_user.id)
     response = api_manager.user_steps.credit_request(credit_request, create_credit_user_request)
     return response
 
 @pytest.fixture
 def deposit_account(api_manager, create_account, create_user_request):
-    deposit_account_request = DepositAccountRequest(accountId=create_account.id, amount=1000)
+    deposit_account_request = RandomModelGenerator.generate(DepositAccountRequest, accountId=create_account.id)
     response = api_manager.user_steps.deposit_account(deposit_account_request, create_user_request)
     return response
 
@@ -934,13 +944,16 @@ from src.main.api.generators.creation_rule import CreationRule
 
 class RandomModelGenerator:
     @staticmethod
-    def generate(cls: type) -> Any:
+    def generate(cls: type, **overrides) -> Any:
         type_hints = get_type_hints(cls, include_extras=True)
         init_data = {}
 
         for field_name, annotated_type in type_hints.items():
+            if field_name in overrides:
+                init_data[field_name] = overrides[field_name]
+                continue
             rule = None
-            actual_type = annotated_type()
+            actual_type = annotated_type
 
             if get_origin(annotated_type) is Annotated:
                 actual_type, *annotations = get_args(annotated_type)
